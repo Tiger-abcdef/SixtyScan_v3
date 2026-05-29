@@ -47,12 +47,13 @@ def pd_probability(logits: torch.Tensor) -> float:
 
 
 # Mobile-optimized page config for iPhone 13 (2532x1170 resolution, 460 ppi)
-st.set_page_config(
-    page_title="SixtyScan Mobile - Parkinson Detection",
-    page_icon="🎤",
-    layout="centered",  # Changed from "wide" to "centered" for mobile
-    initial_sidebar_state="collapsed"
-)
+if __name__ == "__main__":
+    st.set_page_config(
+        page_title="SixtyScan Mobile - Parkinson Detection",
+        page_icon="🎤",
+        layout="centered",  # Changed from "wide" to "centered" for mobile
+        initial_sidebar_state="collapsed"
+    )
 
 # Import your model class
 try:
@@ -60,6 +61,40 @@ try:
 except ImportError:
     st.error("Could not import ResNet18Classifier from model.py. Make sure the file exists.")
     st.stop()
+
+# =============================
+# Model Loading
+# =============================
+def _clean_state_dict(state_dict: dict) -> dict:
+    """Strip 'module.' prefixes from DataParallel checkpoints."""
+    return {(k[len("module."):] if k.startswith("module.") else k): v
+            for k, v in state_dict.items()}
+
+@st.cache_resource
+def load_model():
+    """Load the ResNet18 model with robust checkpoint handling."""
+    try:
+        if not os.path.exists(CONFIG['MODEL_PATH']):
+            with st.spinner("Downloading model..."):
+                gdown.download(CONFIG['MODEL_URL'], CONFIG['MODEL_PATH'], quiet=False)
+        model = ResNet18Classifier()
+        ckpt = torch.load(CONFIG['MODEL_PATH'], map_location=torch.device("cpu"), weights_only=True)
+        if isinstance(ckpt, dict) and 'state_dict' in ckpt:
+            state = _clean_state_dict(ckpt['state_dict'])
+        elif isinstance(ckpt, dict):
+            state = _clean_state_dict(ckpt)
+        else:
+            state = ckpt
+        try:
+            model.load_state_dict(state, strict=True)
+        except Exception as e:
+            st.warning(f"Strict load failed ({e}); trying non-strict load.")
+            model.load_state_dict(state, strict=False)
+        model.eval()
+        return model
+    except Exception as e:
+        st.error(f"Failed to load model: {str(e)}")
+        return None
 
 # =============================
 # Utility Functions
@@ -165,26 +200,6 @@ def run_mobile_app():
     # =============================
     # Model and Analysis Functions
     # =============================
-    @st.cache_resource
-    def load_model():
-        """Load the ResNet18 model with error handling"""
-        try:
-            if not os.path.exists(CONFIG['MODEL_PATH']):
-                with st.spinner("Downloading model..."):
-                    gdown.download(
-                        CONFIG['MODEL_URL'],
-                        CONFIG['MODEL_PATH'],
-                        quiet=False
-                    )
-            
-            model = ResNet18Classifier()
-            model.load_state_dict(torch.load(CONFIG['MODEL_PATH'], map_location=torch.device("cpu")))
-            model.eval()
-            return model
-        except Exception as e:
-            st.error(f"Failed to load model: {str(e)}")
-            return None
-
     def convert_to_wav_if_needed(file_path):
         """Convert audio file to WAV format if necessary"""
         try:
@@ -212,8 +227,18 @@ def run_mobile_app():
             if not wav_file:
                 return None
 
+            if os.path.getsize(wav_file) > 50 * 1024 * 1024:
+                st.error("ไฟล์เสียงใหญ่เกินไป (สูงสุด 50MB)")
+                return None
+
             # === CHANGED: match training SR behavior (no forced resample) ===
             y, sr = librosa.load(wav_file, sr=None, mono=True)
+
+            duration = len(y) / sr
+            if duration > 30:
+                st.error(f"เสียงยาวเกินไป ({duration:.1f}s) กรุณาบันทึกไม่เกิน 30 วินาที")
+                return None
+
             mel = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128)
             mel_db = librosa.power_to_db(mel, ref=np.max)
 
@@ -222,8 +247,10 @@ def run_mobile_app():
             librosa.display.specshow(mel_db, sr=sr, ax=ax)
 
             buf = io.BytesIO()
-            plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
-            plt.close(fig)
+            try:
+                plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
+            finally:
+                plt.close(fig)
 
             buf.seek(0)
             image = Image.open(buf).convert('RGB')
@@ -241,78 +268,42 @@ def run_mobile_app():
             st.error(f"Error creating mel tensor: {str(e)}")
             return None
 
-    def create_mel_spectrogram_display(file_path, title="Mel Spectrogram"):
-        """Create a mel spectrogram for display purposes - mobile optimized"""
-        try:
-            # Convert to WAV if necessary
-            wav_file = convert_to_wav_if_needed(file_path)
-            if not wav_file:
-                return None
-
-            # === CHANGED: match training SR behavior (no forced resample) ===
-            y, sr = librosa.load(wav_file, sr=None, mono=True)
-            mel = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128)
-            mel_db = librosa.power_to_db(mel, ref=np.max)
-
-            # Mobile-optimized figure size
-            fig, ax = plt.subplots(figsize=(6, 3), dpi=100, facecolor='white')
-            
-            img = librosa.display.specshow(mel_db, sr=sr, ax=ax, x_axis='time', y_axis='mel', 
-                                          cmap='plasma', fmax=8000)
-            
-            ax.set_xlabel('Time (s)', fontsize=10)
-            ax.set_ylabel('Mel Frequency', fontsize=10)
-            
-            cbar = plt.colorbar(img, ax=ax, format='%+2.0f dB')
-            cbar.set_label('Power (dB)', fontsize=8)
-            
-            ax.grid(True, alpha=0.3)
-            plt.tight_layout()
-
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', bbox_inches='tight', dpi=150, facecolor='white')
-            plt.close(fig)
-            
-            buf.seek(0)
-            return Image.open(buf)
-            
-        except Exception as e:
-            st.error(f"Error creating spectrogram: {str(e)}")
-            return None
-
     def predict_from_model(vowel_paths, pataka_path, sentence_path, model):
-        """Make predictions from the model with error handling"""
+        """Predict PD probability by averaging logits (matches desktop, more stable than prob-space)."""
         try:
-            inputs = []
-            
+            tensors = []
+
             # Process vowel files
             for path in vowel_paths:
-                tensor = audio_to_mel_tensor(path)
-                if tensor is not None:
-                    inputs.append(tensor)
-                else:
+                t = audio_to_mel_tensor(path)
+                if t is None:
                     st.error(f"Failed to process vowel file: {path}")
                     return None
-            
+                tensors.append(t)
+
             # Process pataka and sentence
             for path in [pataka_path, sentence_path]:
-                tensor = audio_to_mel_tensor(path)
-                if tensor is not None:
-                    inputs.append(tensor)
-                else:
+                t = audio_to_mel_tensor(path)
+                if t is None:
                     st.error(f"Failed to process file: {path}")
                     return None
-            
-            # Make predictions
+                tensors.append(t)
+
+            if not tensors:
+                return None
+
             with torch.no_grad():
-                predictions = []
-                for tensor in inputs:
-                    output = model(tensor)
-                    prob = pd_probability(output)
-                    predictions.append(prob)
-                
-                return predictions
-                
+                logits_list = []
+                for t in tensors:
+                    out = model(t)            # [1, 2]
+                    logits_list.append(out)
+
+                # Average in logit space, then softmax (matches desktop)
+                logits_all = torch.cat(logits_list, dim=0)      # [N, 2]
+                mean_logits = logits_all.mean(dim=0)             # [2]
+                probs = torch.softmax(mean_logits, dim=0)        # [2]
+                return float(probs[CLASS_INDEX_PD].item())
+
         except Exception as e:
             st.error(f"Error making predictions: {str(e)}")
             return None
@@ -724,10 +715,16 @@ def run_mobile_app():
                 st.audio_input(f"🎤 บันทึกเสียง {sound}", key=f"mobile_vowel_{i}_new")
             
             if i < len(st.session_state.vowel_files) and st.session_state.vowel_files[i]:
-                spec_image = create_mel_spectrogram_display(st.session_state.vowel_files[i], f"สระ \"{sound}\"")
-                if spec_image:
-                    st.markdown(f"<div class='mobile-spectrogram-title'>Mel Spectrogram: <b>\"{sound}\"</b></div>", unsafe_allow_html=True)
-                    st.image(spec_image, use_container_width=True)
+                fp = st.session_state.vowel_files[i]
+                if os.path.exists(fp):
+                    with open(fp, 'rb') as f:
+                        st.download_button(
+                            label=f"⬇️ ดาวน์โหลด {sound}.wav",
+                            data=f.read(),
+                            file_name=f"vowel_{sound}.wav",
+                            mime="audio/wav",
+                            key=f"dl_mobile_vowel_{i}"
+                        )
 
         # File uploader for vowels
         uploaded_vowels = st.file_uploader("อัปโหลดไฟล์เสียงสระ (7 ไฟล์)", type=["wav", "mp3", "m4a"], accept_multiple_files=True)
@@ -761,11 +758,15 @@ def run_mobile_app():
         else:
             pataka_bytes = st.audio_input("🎤 บันทึกเสียงพยางค์", key="mobile_pataka_new")
 
-        if st.session_state.pataka_file:
-            spec_image = create_mel_spectrogram_display(st.session_state.pataka_file, "พยางค์")
-            if spec_image:
-                st.markdown("<div class='mobile-spectrogram-title'>Mel Spectrogram: <b>\"พา-ทา-คา\"</b></div>", unsafe_allow_html=True)
-                st.image(spec_image, use_container_width=True)
+        if st.session_state.pataka_file and os.path.exists(st.session_state.pataka_file):
+            with open(st.session_state.pataka_file, 'rb') as f:
+                st.download_button(
+                    label="⬇️ ดาวน์โหลด pataka.wav",
+                    data=f.read(),
+                    file_name="pataka.wav",
+                    mime="audio/wav",
+                    key="dl_mobile_pataka"
+                )
 
         # File uploader for pataka
         uploaded_pataka = st.file_uploader("อัปโหลดไฟล์เสียงพยางค์", type=["wav", "mp3", "m4a"], accept_multiple_files=False)
@@ -796,11 +797,15 @@ def run_mobile_app():
         else:
             sentence_bytes = st.audio_input("🎤 บันทึกการอ่านประโยค", key="mobile_sentence_new")
 
-        if st.session_state.sentence_file:
-            spec_image = create_mel_spectrogram_display(st.session_state.sentence_file, "ประโยค")
-            if spec_image:
-                st.markdown("<div class='mobile-spectrogram-title'>Mel Spectrogram: <b>\"วันนี้อากาศแจ่มใสนกร้องเสียงดังเป็นจังหวะ\"</b></div>", unsafe_allow_html=True)
-                st.image(spec_image, use_container_width=True)
+        if st.session_state.sentence_file and os.path.exists(st.session_state.sentence_file):
+            with open(st.session_state.sentence_file, 'rb') as f:
+                st.download_button(
+                    label="⬇️ ดาวน์โหลด sentence.wav",
+                    data=f.read(),
+                    file_name="sentence.wav",
+                    mime="audio/wav",
+                    key="dl_mobile_sentence"
+                )
 
         # File uploader for sentence
         uploaded_sentence = st.file_uploader("อัปโหลดไฟล์เสียงประโยค", type=["wav", "mp3", "m4a"], accept_multiple_files=False)
@@ -829,18 +834,17 @@ def run_mobile_app():
             if len(valid_vowel_files) == 7 and st.session_state.pataka_file and st.session_state.sentence_file:
                 with st.spinner("กำลังวิเคราะห์..."):
                     try:
-                        all_probs = predict_from_model(
-                            valid_vowel_files, 
-                            st.session_state.pataka_file, 
-                            st.session_state.sentence_file, 
+                        final_prob = predict_from_model(
+                            valid_vowel_files,
+                            st.session_state.pataka_file,
+                            st.session_state.sentence_file,
                             model
                         )
-                        
-                        if all_probs is None:
+
+                        if final_prob is None:
                             st.error("การวิเคราะห์ล้มเหลว กรุณาลองใหม่อีกครั้ง")
                             return
-                            
-                        final_prob = np.mean(all_probs)
+
                         percent = int(final_prob * 100)
 
                         # Determine risk level and advice
@@ -899,41 +903,6 @@ def run_mobile_app():
                             </div>
                         """
                         st.markdown(results_html, unsafe_allow_html=True)
-                        
-                        # Mobile-optimized spectrograms display
-                        st.markdown("### 📊 การวิเคราะห์ Mel Spectrogram ทั้งหมด")
-                        
-                        # Display all spectrograms in a single column for mobile
-                        for i, (sound, file_path) in enumerate(zip(vowel_sounds, valid_vowel_files)):
-                            spec_image = create_mel_spectrogram_display(file_path, f"สระ \"{sound}\"")
-                            if spec_image:
-                                st.markdown(f"<div class='mobile-spectrogram-title'>Mel Spectrogram: <b>\"{sound}\"</b></div>", unsafe_allow_html=True)
-                                st.image(spec_image, use_container_width=True)
-                        
-                        # Display pataka spectrogram
-                        spec_image = create_mel_spectrogram_display(st.session_state.pataka_file, "พยางค์")
-                        if spec_image:
-                            st.markdown("<div class='mobile-spectrogram-title'>Mel Spectrogram: <b>\"พา-ทา-คา\"</b></div>", unsafe_allow_html=True)
-                            st.image(spec_image, use_container_width=True)
-                        
-                        # Display sentence spectrogram
-                        spec_image = create_mel_spectrogram_display(st.session_state.sentence_file, "ประโยค")
-                        if spec_image:
-                            st.markdown("<div class='mobile-spectrogram-title'>Mel Spectrogram: <b>\"ประโยค\"</b></div>", unsafe_allow_html=True)
-                            st.image(spec_image, use_container_width=True)
-                        
-                        # Mobile-optimized information about spectrograms
-                        info_html = """
-                        <div class='mobile-spectrogram-info'>
-                            <h4 class='mobile-info-title'>💡 เกี่ยวกับ Mel Spectrogram</h4>
-                            <p class='mobile-info-text'>• <b>สีเข้ม (น้ำเงิน/ม่วง):</b> ความถี่ที่มีพลังงานต่ำ</p>
-                            <p class='mobile-info-text'>• <b>สีอ่อน (เหลือง/แดง):</b> ความถี่ที่มีพลังงานสูง</p>
-                            <p class='mobile-info-text'>• <b>แกน X:</b> เวลา (วินาที)</p>
-                            <p class='mobile-info-text'>• <b>แกน Y:</b> ความถี่ Mel</p>
-                            <p class='mobile-info-text'>• รูปแบบของ Spectrogram สามารถช่วยระบุความผิดปกติของการออกเสียงได้</p>
-                        </div>
-                        """
-                        st.markdown(info_html, unsafe_allow_html=True)
                     except Exception as e:
                         st.error(f"เกิดข้อผิดพลาดในการวิเคราะห์: {str(e)}")
             else:

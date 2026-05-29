@@ -38,12 +38,13 @@ CONFIG = {
     'PD_INDEX': 1,
 }
 
-st.set_page_config(
-    page_title="SixtyScan - Parkinson Detection",
-    page_icon="🎤",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
+if __name__ == "__main__":
+    st.set_page_config(
+        page_title="SixtyScan - Parkinson Detection",
+        page_icon="🎤",
+        layout="wide",
+        initial_sidebar_state="collapsed"
+    )
 
 # Import your model class
 try:
@@ -51,6 +52,40 @@ try:
 except ImportError:
     st.error("Could not import ResNet18Classifier from model.py. Make sure the file exists.")
     st.stop()
+
+# =============================
+# Model Loading
+# =============================
+def _clean_state_dict(state_dict: dict) -> dict:
+    """Strip 'module.' prefixes from DataParallel checkpoints."""
+    return {(k[len("module."):] if k.startswith("module.") else k): v
+            for k, v in state_dict.items()}
+
+@st.cache_resource
+def load_model():
+    """Load the ResNet18 model with robust checkpoint handling."""
+    try:
+        if not os.path.exists(CONFIG['MODEL_PATH']):
+            with st.spinner("Downloading model..."):
+                gdown.download(CONFIG['MODEL_URL'], CONFIG['MODEL_PATH'], quiet=False)
+        model = ResNet18Classifier()
+        ckpt = torch.load(CONFIG['MODEL_PATH'], map_location=torch.device("cpu"), weights_only=True)
+        if isinstance(ckpt, dict) and 'state_dict' in ckpt:
+            state = _clean_state_dict(ckpt['state_dict'])
+        elif isinstance(ckpt, dict):
+            state = _clean_state_dict(ckpt)
+        else:
+            state = ckpt
+        try:
+            model.load_state_dict(state, strict=True)
+        except Exception as e:
+            st.warning(f"Strict load failed ({e}); trying non-strict load.")
+            model.load_state_dict(state, strict=False)
+        model.eval()
+        return model
+    except Exception as e:
+        st.error(f"Failed to load model: {str(e)}")
+        return None
 
 # =============================
 # Utility Functions
@@ -155,51 +190,6 @@ def run_desktop_app():
     # =============================
     # Model and Analysis Functions
     # =============================
-    def _clean_state_dict(state_dict: dict) -> dict:
-        """Strip 'module.' prefixes etc. for DataParallel checkpoints."""
-        cleaned = {}
-        for k, v in state_dict.items():
-            nk = k
-            if nk.startswith("module."):
-                nk = nk[len("module."):]
-            cleaned[nk] = v
-        return cleaned
-
-    @st.cache_resource
-    def load_model():
-        """Load the ResNet18 model with robust checkpoint handling."""
-        try:
-            if not os.path.exists(CONFIG['MODEL_PATH']):
-                with st.spinner("Downloading model..."):
-                    gdown.download(
-                        CONFIG['MODEL_URL'],
-                        CONFIG['MODEL_PATH'],
-                        quiet=False
-                    )
-
-            model = ResNet18Classifier()
-            # Robustly handle different checkpoint formats
-            ckpt = torch.load(CONFIG['MODEL_PATH'], map_location=torch.device("cpu"))
-            if isinstance(ckpt, dict) and 'state_dict' in ckpt:
-                state = _clean_state_dict(ckpt['state_dict'])
-            elif isinstance(ckpt, dict):
-                state = _clean_state_dict(ckpt)
-            else:
-                state = ckpt
-
-            try:
-                model.load_state_dict(state, strict=True)
-            except Exception as e:
-                # Fallback if minor key mismatches exist (warn but proceed)
-                st.warning(f"Strict load failed ({e}); trying non-strict load.")
-                model.load_state_dict(state, strict=False)
-
-            model.eval()
-            return model
-        except Exception as e:
-            st.error(f"Failed to load model: {str(e)}")
-            return None
-
     def convert_to_wav_if_needed(file_path):
         """Convert audio file to WAV format if necessary"""
         try:
@@ -225,8 +215,17 @@ def run_desktop_app():
             if not wav_file:
                 return None
 
+            if os.path.getsize(wav_file) > 50 * 1024 * 1024:
+                st.error("ไฟล์เสียงใหญ่เกินไป (สูงสุด 50MB)")
+                return None
+
             # Match training: do NOT force-resample; use mono
             y, sr = librosa.load(wav_file, sr=None, mono=True)
+
+            duration = len(y) / sr
+            if duration > 30:
+                st.error(f"เสียงยาวเกินไป ({duration:.1f}s) กรุณาบันทึกไม่เกิน 30 วินาที")
+                return None
 
             mel = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128)
             mel_db = librosa.power_to_db(mel, ref=np.max)
@@ -236,8 +235,10 @@ def run_desktop_app():
             ax.axis('off')
             librosa.display.specshow(mel_db, sr=sr, ax=ax)  # no cmap/fmax: keep as default
             buf = io.BytesIO()
-            plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
-            plt.close(fig)
+            try:
+                plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
+            finally:
+                plt.close(fig)
             buf.seek(0)
 
             image = Image.open(buf).convert('RGB')
@@ -251,35 +252,6 @@ def run_desktop_app():
             return transform(image).unsqueeze(0)  # (1, 3, 224, 224)
         except Exception as e:
             st.error(f"Error creating mel tensor: {str(e)}")
-            return None
-
-    def create_mel_spectrogram_display(file_path, title="Mel Spectrogram"):
-        """Create a mel spectrogram for display purposes"""
-        try:
-            wav_file = convert_to_wav_if_needed(file_path)
-            if not wav_file:
-                return None
-
-            y, sr = librosa.load(wav_file, sr=None, mono=True)
-            mel = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128)
-            mel_db = librosa.power_to_db(mel, ref=np.max)
-
-            fig, ax = plt.subplots(figsize=(8, 4), dpi=100, facecolor='white')
-            img = librosa.display.specshow(mel_db, sr=sr, ax=ax, x_axis='time', y_axis='mel')
-            ax.set_xlabel('Time (s)', fontsize=12)
-            ax.set_ylabel('Mel Frequency', fontsize=12)
-            cbar = plt.colorbar(img, ax=ax, format='%+2.0f dB')
-            cbar.set_label('Power (dB)', fontsize=10)
-            ax.grid(True, alpha=0.3)
-            plt.tight_layout()
-
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', bbox_inches='tight', dpi=150, facecolor='white')
-            plt.close(fig)
-            buf.seek(0)
-            return Image.open(buf)
-        except Exception as e:
-            st.error(f"Error creating spectrogram: {str(e)}")
             return None
 
     def predict_from_model(vowel_paths, pataka_path, sentence_path, model):
@@ -721,10 +693,16 @@ def run_desktop_app():
                 st.audio_input(f"🎤 บันทึกเสียง {sound}", key=f"vowel_{i}_new")
 
             if i < len(st.session_state.vowel_files) and st.session_state.vowel_files[i]:
-                spec_image = create_mel_spectrogram_display(st.session_state.vowel_files[i], f"สระ \"{sound}\"")
-                if spec_image:
-                    st.markdown(f"<div style='color: black; font-size: 18px; margin-bottom: 12px; text-align: center; font-family: \"Prompt\", sans-serif; font-weight: 500;'>Mel Spectrogram: <b>\"{sound}\"</b></div>", unsafe_allow_html=True)
-                    st.image(spec_image, use_container_width=True)
+                fp = st.session_state.vowel_files[i]
+                if os.path.exists(fp):
+                    with open(fp, 'rb') as f:
+                        st.download_button(
+                            label=f"⬇️ ดาวน์โหลด {sound}.wav",
+                            data=f.read(),
+                            file_name=f"vowel_{sound}.wav",
+                            mime="audio/wav",
+                            key=f"dl_vowel_{i}"
+                        )
 
         # File uploader for vowels
         uploaded_vowels = st.file_uploader("อัปโหลดไฟล์เสียงสระ (7 ไฟล์)", type=["wav", "mp3", "m4a"], accept_multiple_files=True)
@@ -758,11 +736,15 @@ def run_desktop_app():
         else:
             pataka_bytes = st.audio_input("🎤 บันทึกเสียงพยางค์", key="pataka_new")
 
-        if st.session_state.pataka_file:
-            spec_image = create_mel_spectrogram_display(st.session_state.pataka_file, "พยางค์")
-            if spec_image:
-                st.markdown("<div style='color: black; font-size: 18px; margin-bottom: 12px; text-align: center; font-family: \"Prompt\", sans-serif; font-weight: 500;'>Mel Spectrogram: <b>\"พา-ทา-คา\"</b></div>", unsafe_allow_html=True)
-                st.image(spec_image, use_container_width=True)
+        if st.session_state.pataka_file and os.path.exists(st.session_state.pataka_file):
+            with open(st.session_state.pataka_file, 'rb') as f:
+                st.download_button(
+                    label="⬇️ ดาวน์โหลด pataka.wav",
+                    data=f.read(),
+                    file_name="pataka.wav",
+                    mime="audio/wav",
+                    key="dl_pataka"
+                )
 
         # File uploader for pataka
         uploaded_pataka = st.file_uploader("อัปโหลดไฟล์เสียงพยางค์", type=["wav", "mp3", "m4a"], accept_multiple_files=False)
@@ -793,11 +775,15 @@ def run_desktop_app():
         else:
             sentence_bytes = st.audio_input("🎤 บันทึกการอ่านประโยค", key="sentence_new")
 
-        if st.session_state.sentence_file:
-            spec_image = create_mel_spectrogram_display(st.session_state.sentence_file, "ประโยค")
-            if spec_image:
-                st.markdown("<div style='color: black; font-size: 18px; margin-bottom: 12px; text-align: center; font-family: \"Prompt\", sans-serif; font-weight: 500;'>Mel Spectrogram: <b>\"วันนี้อากาศแจ่มใสนกร้องเสียงดังเป็นจังหวะ\"</b></div>", unsafe_allow_html=True)
-                st.image(spec_image, use_container_width=True)
+        if st.session_state.sentence_file and os.path.exists(st.session_state.sentence_file):
+            with open(st.session_state.sentence_file, 'rb') as f:
+                st.download_button(
+                    label="⬇️ ดาวน์โหลด sentence.wav",
+                    data=f.read(),
+                    file_name="sentence.wav",
+                    mime="audio/wav",
+                    key="dl_sentence"
+                )
 
         # File uploader for sentence
         uploaded_sentence = st.file_uploader("อัปโหลดไฟล์เสียงประโยค", type=["wav", "mp3", "m4a"], accept_multiple_files=False)
@@ -895,49 +881,6 @@ def run_desktop_app():
                             </div>
                         """
                         st.markdown(results_html, unsafe_allow_html=True)
-
-                        # Display all spectrograms in the results section
-                        st.markdown("### 📊 การวิเคราะห์ Mel Spectrogram ทั้งหมด")
-
-                        # Create a grid layout for all spectrograms
-                        spec_cols = st.columns(3)
-
-                        # Display vowel spectrograms
-                        for i, (sound, file_path) in enumerate(zip(vowel_sounds, valid_vowel_files)):
-                            with spec_cols[i % 3]:
-                                spec_image = create_mel_spectrogram_display(file_path, f"สระ \"{sound}\"")
-                                if spec_image:
-                                    st.markdown(f"<div style='color: black; font-size: 16px; margin-bottom: 10px; text-align: center; font-family: \"Prompt\", sans-serif; font-weight: 500;'>Mel Spectrogram: <b>\"{sound}\"</b></div>", unsafe_allow_html=True)
-                                    st.image(spec_image, use_container_width=True)
-
-                        # Display pataka spectrogram
-                        col_idx = len(vowel_sounds) % 3
-                        with spec_cols[col_idx]:
-                            spec_image = create_mel_spectrogram_display(st.session_state.pataka_file, "พยางค์")
-                            if spec_image:
-                                st.markdown("<div style='color: black; font-size: 16px; margin-bottom: 10px; text-align: center; font-family: \"Prompt\", sans-serif; font-weight: 500;'>Mel Spectrogram: <b>\"พา-ทา-คา\"</b></div>", unsafe_allow_html=True)
-                                st.image(spec_image, use_container_width=True)
-
-                        # Display sentence spectrogram
-                        col_idx = (len(vowel_sounds) + 1) % 3
-                        with spec_cols[col_idx]:
-                            spec_image = create_mel_spectrogram_display(st.session_state.sentence_file, "ประโยค")
-                            if spec_image:
-                                st.markdown("<div style='color: black; font-size: 16px; margin-bottom: 10px; text-align: center; font-family: \"Prompt\", sans-serif; font-weight: 500;'>Mel Spectrogram: <b>\"ประโยค\"</b></div>", unsafe_allow_html=True)
-                                st.image(spec_image, use_container_width=True)
-
-                        # Information about spectrograms
-                        info_html = """
-                        <div style='margin-top: 30px; padding: 30px; background-color: #f8f9fa; border-radius: 16px; border-left: 6px solid #6A1B9A;'>
-                            <h4 style='color: #4A148C; margin-bottom: 20px; font-family: "Prompt", sans-serif; font-size: 24px; font-weight: 600;'>💡 เกี่ยวกับ Mel Spectrogram</h4>
-                            <p style='font-size: 18px; margin-bottom: 12px; font-family: "Prompt", sans-serif; line-height: 1.6;'>• <b>สีเข้ม (น้ำเงิน/ม่วง):</b> ความถี่ที่มีพลังงานต่ำ</p>
-                            <p style='font-size: 18px; margin-bottom: 12px; font-family: "Prompt", sans-serif; line-height: 1.6;'>• <b>สีอ่อน (เหลือง/แดง):</b> ความถี่ที่มีพลังงานสูง</p>
-                            <p style='font-size: 18px; margin-bottom: 12px; font-family: "Prompt", sans-serif; line-height: 1.6;'>• <b>แกน X:</b> เวลา (วินาที)</p>
-                            <p style='font-size: 18px; margin-bottom: 12px; font-family: "Prompt", sans-serif; line-height: 1.6;'>• <b>แกน Y:</b> ความถี่ Mel</p>
-                            <p style='font-size: 18px; font-family: "Prompt", sans-serif; line-height: 1.6;'>• รูปแบบของ Spectrogram สามารถช่วยระบุความผิดปกติของการออกเสียงได้</p>
-                        </div>
-                        """
-                        st.markdown(info_html, unsafe_allow_html=True)
                     except Exception as e:
                         st.error(f"เกิดข้อผิดพลาดในการวิเคราะห์: {str(e)}")
             else:

@@ -5,11 +5,9 @@ librosa==0.10.1
 numpy==1.26.4
 matplotlib==3.8.4
 pydub==0.25.1
-scikit-learn==1.4.2
 soundfile==0.12.1
 Pillow==10.3.0
-pandas==2.2.2
-streamlit-webrtc==0.62.4
 ffmpeg-python==0.2.0
 streamlit==1.46.0
 gdown==5.2.0
+pytz
