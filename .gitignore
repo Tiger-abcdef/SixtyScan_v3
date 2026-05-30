@@ -6,6 +6,7 @@ __pycache__/
 
 # Model weights — download via gdown at runtime, never commit
 *.pth
+!best_model.pth
 *.pt
 *.onnx
 *.pkl
