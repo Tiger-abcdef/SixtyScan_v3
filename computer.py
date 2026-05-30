@@ -207,6 +207,8 @@ def run_desktop_app():
 
     def audio_to_mel_tensor(file_path):
         """Convert audio file to mel spectrogram tensor (training-aligned)."""
+        if file_path is None:
+            return None
         try:
             wav_file = convert_to_wav_if_needed(file_path)
             if not wav_file:
@@ -264,8 +266,8 @@ def run_desktop_app():
                     return None
                 tensors.append(t)
 
-            # Process pataka and sentence
-            for path in [pataka_path, sentence_path]:
+            # Process pataka and sentence — skip None paths (bypass mode or missing recordings)
+            for path in [p for p in [pataka_path, sentence_path] if p is not None]:
                 t = audio_to_mel_tensor(path)
                 if t is None:
                     st.error(f"Failed to process file: {path}")
