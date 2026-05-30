@@ -105,8 +105,7 @@ def initialize_session_state():
         'pataka_file': None,
         'sentence_file': None,
         'clear_clicked': False,
-        'temp_files': [],  # Track all temp files for cleanup
-        'result': None,    # Last analysis result; cleared only by ลบข้อมูล
+        'temp_files': []  # Track all temp files for cleanup
     }
     
     for key, default_value in defaults.items():
@@ -792,7 +791,6 @@ def run_mobile_app():
             st.session_state.sentence_file = None
             st.session_state.clear_clicked = True
             st.session_state.clear_button_clicked = False
-            st.session_state.result = None
             st.success("ลบข้อมูลทั้งหมดเรียบร้อยแล้ว", icon="🗑️")
             st.rerun()
 
@@ -1001,47 +999,32 @@ def run_mobile_app():
                             </ul>
                             """
 
-                        # Store result in session state so the display survives reruns
-                        # (e.g. when the download button is pressed). Cleared only by ลบข้อมูล.
-                        st.session_state.result = {
-                            'label': label,
-                            'level': level,
-                            'percent': percent,
-                            'diagnosis': diagnosis,
-                            'box_color': box_color,
-                            'border_color': border_color,
-                            'advice_html': advice_html,
-                            'png': build_result_png(label, level, percent, border_color, box_color),
-                        }
+                        # Mobile-optimized results display
+                        results_html = f"""
+                            <div class='mobile-results-container' style='background-color:{box_color}; border-left: 8px solid {border_color};'>
+                                <div class='mobile-results-label' style='color: {border_color};'>{label}</div>
+                                <p class='mobile-results-text'><b>ระดับความน่าจะเป็น:</b> {level}</p>
+                                <p class='mobile-results-text'><b>ความน่าจะเป็นของพาร์กินสัน:</b> {percent}%</p>
+                                <div class='mobile-progress-bar'>
+                                    <div class='mobile-progress-indicator' style='left: {percent}%;'></div>
+                                </div>
+                                <p class='mobile-results-text'><b>ผลการวิเคราะห์:</b> {diagnosis}</p>
+                                <p class='mobile-advice-title'><b>คำแนะนำ</b></p>
+                                {advice_html}
+                            </div>
+                        """
+                        st.markdown(results_html, unsafe_allow_html=True)
+                        st.download_button(
+                            label="⬇️ ดาวน์โหลดผลการตรวจ (PNG)",
+                            data=build_result_png(label, level, percent, border_color, box_color),
+                            file_name="sixtyscan_result.png",
+                            mime="image/png",
+                            use_container_width=True,
+                        )
                     except Exception as e:
                         st.error(f"เกิดข้อผิดพลาดในการวิเคราะห์: {str(e)}")
             # else:  # BYPASS: warning suppressed
             #     st.warning("กรุณาอัดเสียงหรืออัปโหลดให้ครบทั้ง 7 สระ พยางค์ และประโยค", icon="⚠")
-
-        # Render stored result — persists across reruns until ลบข้อมูล is pressed
-        if st.session_state.get('result'):
-            r = st.session_state.result
-            results_html = f"""
-                <div class='mobile-results-container' style='background-color:{r['box_color']}; border-left: 8px solid {r['border_color']};'>
-                    <div class='mobile-results-label' style='color: {r['border_color']};'>{r['label']}</div>
-                    <p class='mobile-results-text'><b>ระดับความน่าจะเป็น:</b> {r['level']}</p>
-                    <p class='mobile-results-text'><b>ความน่าจะเป็นของพาร์กินสัน:</b> {r['percent']}%</p>
-                    <div class='mobile-progress-bar'>
-                        <div class='mobile-progress-indicator' style='left: {r['percent']}%;'></div>
-                    </div>
-                    <p class='mobile-results-text'><b>ผลการวิเคราะห์:</b> {r['diagnosis']}</p>
-                    <p class='mobile-advice-title'><b>คำแนะนำ</b></p>
-                    {r['advice_html']}
-                </div>
-            """
-            st.markdown(results_html, unsafe_allow_html=True)
-            st.download_button(
-                label="⬇️ ดาวน์โหลดผลการตรวจ (PNG)",
-                data=r['png'],
-                file_name="sixtyscan_result.png",
-                mime="image/png",
-                use_container_width=True,
-            )
 
     # =============================
     # Main App Logic
