@@ -95,7 +95,8 @@ def initialize_session_state():
         'pataka_file': None,
         'sentence_file': None,
         'clear_clicked': False,
-        'temp_files': []  # Track all temp files for cleanup
+        'temp_files': [],  # Track all temp files for cleanup
+        'result': None,    # Last analysis result; cleared only by ลบข้อมูล
     }
     for key, default_value in defaults.items():
         if key not in st.session_state:
@@ -768,6 +769,7 @@ def run_desktop_app():
             st.session_state.sentence_file = None
             st.session_state.clear_clicked = True
             st.session_state.clear_button_clicked = False
+            st.session_state.result = None
             st.success("ลบข้อมูลทั้งหมดเรียบร้อยแล้ว", icon="🗑️")
             st.rerun()
 
@@ -976,32 +978,47 @@ def run_desktop_app():
                             </ul>
                             """
 
-                        # Display results
-                        results_html = f"""
-                            <div style='background-color:{box_color}; padding: 40px; border-radius: 20px; font-size: 28px; color: #000000; font-family: "Prompt", sans-serif; border-left: 8px solid {border_color}; box-shadow: 0 8px 32px rgba(0,0,0,0.08); margin: 30px 0;'>
-                                <div style='text-align: center; font-size: 48px; font-weight: 700; margin-bottom: 30px; color: {border_color};'>{label}</div>
-                                <p style='margin-bottom: 20px;'><b>ระดับความน่าจะเป็น:</b> {level}</p>
-                                <p style='margin-bottom: 20px;'><b>ความน่าจะเป็นของพาร์กินสัน:</b> {percent}%</p>
-                                <div style='height: 40px; background: linear-gradient(to right, #4caf50, #ff9800, #f44336); border-radius: 20px; margin-bottom: 25px; position: relative; box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);'>
-                                    <div style='position: absolute; left: {percent}%; top: -5px; bottom: -5px; width: 6px; background-color: #333; border-radius: 3px; box-shadow: 0 2px 8px rgba(0,0,0,0.3);'></div>
-                                </div>
-                                <p style='margin-bottom: 20px;'><b>ผลการวิเคราะห์:</b> {diagnosis}</p>
-                                <p style='margin-bottom: 15px; font-size: 30px; font-weight: 600;'><b>คำแนะนำ</b></p>
-                                {advice_html}
-                            </div>
-                        """
-                        st.markdown(results_html, unsafe_allow_html=True)
-                        st.download_button(
-                            label="⬇️ ดาวน์โหลดผลการตรวจ (PNG)",
-                            data=build_result_png(label, level, percent, border_color, box_color),
-                            file_name="sixtyscan_result.png",
-                            mime="image/png",
-                            use_container_width=True,
-                        )
+                        # Store result in session state so the display survives reruns
+                        # (e.g. when the download button is pressed). Cleared only by ลบข้อมูล.
+                        st.session_state.result = {
+                            'label': label,
+                            'level': level,
+                            'percent': percent,
+                            'diagnosis': diagnosis,
+                            'box_color': box_color,
+                            'border_color': border_color,
+                            'advice_html': advice_html,
+                            'png': build_result_png(label, level, percent, border_color, box_color),
+                        }
                     except Exception as e:
                         st.error(f"เกิดข้อผิดพลาดในการวิเคราะห์: {str(e)}")
             # else:  # BYPASS: warning suppressed
             #     st.warning("กรุณาอัดเสียงหรืออัปโหลดให้ครบทั้ง 7 สระ พยางค์ และประโยค", icon="⚠")
+
+        # Render stored result — persists across reruns until ลบข้อมูล is pressed
+        if st.session_state.get('result'):
+            r = st.session_state.result
+            results_html = f"""
+                <div style='background-color:{r['box_color']}; padding: 40px; border-radius: 20px; font-size: 28px; color: #000000; font-family: "Prompt", sans-serif; border-left: 8px solid {r['border_color']}; box-shadow: 0 8px 32px rgba(0,0,0,0.08); margin: 30px 0;'>
+                    <div style='text-align: center; font-size: 48px; font-weight: 700; margin-bottom: 30px; color: {r['border_color']};'>{r['label']}</div>
+                    <p style='margin-bottom: 20px;'><b>ระดับความน่าจะเป็น:</b> {r['level']}</p>
+                    <p style='margin-bottom: 20px;'><b>ความน่าจะเป็นของพาร์กินสัน:</b> {r['percent']}%</p>
+                    <div style='height: 40px; background: linear-gradient(to right, #4caf50, #ff9800, #f44336); border-radius: 20px; margin-bottom: 25px; position: relative; box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);'>
+                        <div style='position: absolute; left: {r['percent']}%; top: -5px; bottom: -5px; width: 6px; background-color: #333; border-radius: 3px; box-shadow: 0 2px 8px rgba(0,0,0,0.3);'></div>
+                    </div>
+                    <p style='margin-bottom: 20px;'><b>ผลการวิเคราะห์:</b> {r['diagnosis']}</p>
+                    <p style='margin-bottom: 15px; font-size: 30px; font-weight: 600;'><b>คำแนะนำ</b></p>
+                    {r['advice_html']}
+                </div>
+            """
+            st.markdown(results_html, unsafe_allow_html=True)
+            st.download_button(
+                label="⬇️ ดาวน์โหลดผลการตรวจ (PNG)",
+                data=r['png'],
+                file_name="sixtyscan_result.png",
+                mime="image/png",
+                use_container_width=True,
+            )
 
     # =============================
     # Main App Logic
