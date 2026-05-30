@@ -311,6 +311,113 @@ def run_mobile_app():
             return None
 
     # =============================
+    # Result PNG builder
+    # =============================
+    def build_result_png(label, level, percent, border_color, box_color):
+        """Render the result card as a PNG and return the raw bytes."""
+        import io as _io
+        import datetime as _dt
+        import numpy as _np
+        import matplotlib.pyplot as _plt
+        import matplotlib.patches as _patches
+        from matplotlib.colors import LinearSegmentedColormap as _LSC
+
+        try:
+            risk_en = level[level.index('(') + 1: level.index(')')]
+        except ValueError:
+            risk_en = level
+
+        diagnosis_en = "No Parkinson's Detected" if label == "Non Parkinson" else "Parkinson's Detected"
+
+        if percent <= 50:
+            advice = [
+                "No symptoms: annual check-up (optional)",
+                "Mild symptoms: check-up twice per year",
+                "Warning signs: check-up 2-4 times per year",
+            ]
+        elif percent <= 75:
+            advice = [
+                "Consult a neurologist",
+                "Keep a daily symptom journal",
+                "If on medication: record any side effects",
+            ]
+        else:
+            advice = [
+                "See a neurologist as soon as possible",
+                "Keep a daily symptom journal",
+                "If on medication: monitor closely",
+            ]
+
+        fig = _plt.figure(figsize=(7, 9.5), facecolor='white')
+        ax = fig.add_axes([0, 0, 1, 1])
+        ax.set_xlim(0, 7)
+        ax.set_ylim(0, 9.5)
+        ax.axis('off')
+
+        ax.add_patch(_patches.FancyBboxPatch(
+            (0.25, 0.25), 6.5, 9.0, boxstyle="round,pad=0.1",
+            facecolor=box_color, edgecolor=border_color, linewidth=4))
+        ax.add_patch(_patches.Rectangle(
+            (0.25, 0.25), 0.2, 9.0, facecolor=border_color, linewidth=0))
+
+        ax.text(3.5, 8.85, 'SixtyScan', ha='center', va='center',
+                fontsize=24, fontweight='bold', color='#4A148C')
+        ax.text(3.5, 8.4, 'Voice-based Parkinson Screening Result',
+                ha='center', va='center', fontsize=11, color='#777', style='italic')
+        ax.plot([0.6, 6.4], [8.1, 8.1], color=border_color, linewidth=1.2)
+
+        ax.text(3.5, 7.55, label, ha='center', va='center',
+                fontsize=40, fontweight='bold', color=border_color)
+        ax.text(3.5, 6.85, f'Risk Level:  {risk_en}',
+                ha='center', va='center', fontsize=14, color='#444')
+        ax.text(3.5, 6.3, f'PD Probability:  {percent}%',
+                ha='center', va='center', fontsize=18, fontweight='bold', color='#111')
+
+        bx, by, bw, bh = 0.7, 5.75, 5.6, 0.35
+        cmap = _LSC.from_list('risk', ['#4caf50', '#ff9800', '#f44336'])
+        ax.imshow(_np.linspace(0, 1, 256).reshape(1, -1), aspect='auto', cmap=cmap,
+                  extent=[bx, bx + bw, by, by + bh], zorder=2)
+        ax.add_patch(_patches.FancyBboxPatch(
+            (bx, by), bw, bh, boxstyle="round,pad=0.04",
+            facecolor='none', edgecolor='#bbb', linewidth=1, zorder=3))
+        mx = bx + (percent / 100.0) * bw
+        ax.add_patch(_patches.Rectangle(
+            (mx - 0.045, by - 0.1), 0.09, bh + 0.2,
+            facecolor='#222', edgecolor='white', linewidth=1.2, zorder=4))
+        ax.text(bx - 0.05, by + bh / 2, '0%',   ha='right', va='center', fontsize=8, color='#888')
+        ax.text(bx + bw + 0.05, by + bh / 2, '100%', ha='left',  va='center', fontsize=8, color='#888')
+
+        ax.text(3.5, 5.25, f'Diagnosis:  {diagnosis_en}',
+                ha='center', va='center', fontsize=14, color='#333')
+        ax.plot([0.6, 6.4], [4.95, 4.95], color='#ddd', linewidth=0.8)
+
+        ax.text(3.5, 4.65, 'Recommendations', ha='center', va='center',
+                fontsize=13, fontweight='bold', color='#333')
+        for i, line in enumerate(advice):
+            ax.text(1.0, 4.15 - i * 0.62, f'•  {line}',
+                    ha='left', va='center', fontsize=11, color='#444')
+
+        ax.plot([0.6, 6.4], [0.9, 0.9], color='#ddd', linewidth=0.8)
+        try:
+            ts = _dt.datetime.now(
+                __import__('pytz').timezone('Asia/Bangkok')
+            ).strftime('%d %b %Y  %H:%M ICT')
+        except Exception:
+            ts = _dt.datetime.now().strftime('%d %b %Y  %H:%M')
+        ax.text(3.5, 0.65, f'Generated: {ts}', ha='center', va='center',
+                fontsize=9, color='#aaa')
+        ax.text(3.5, 0.38,
+                'Screening tool only. Consult a physician for medical diagnosis.',
+                ha='center', va='center', fontsize=8, color='#bbb', style='italic')
+
+        buf = _io.BytesIO()
+        fig.savefig(buf, format='png', dpi=150, bbox_inches='tight',
+                    facecolor='white', edgecolor='none')
+        _plt.close(fig)
+        buf.seek(0)
+        return buf.read()
+
+    # =============================
     # Page Functions
     # =============================
     def get_header_html():
@@ -907,6 +1014,13 @@ def run_mobile_app():
                             </div>
                         """
                         st.markdown(results_html, unsafe_allow_html=True)
+                        st.download_button(
+                            label="⬇️ ดาวน์โหลดผลการตรวจ (PNG)",
+                            data=build_result_png(label, level, percent, border_color, box_color),
+                            file_name="sixtyscan_result.png",
+                            mime="image/png",
+                            use_container_width=True,
+                        )
                     except Exception as e:
                         st.error(f"เกิดข้อผิดพลาดในการวิเคราะห์: {str(e)}")
             # else:  # BYPASS: warning suppressed
