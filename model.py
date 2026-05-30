@@ -4,7 +4,7 @@ from torchvision import models, transforms
 class ResNet18Classifier(nn.Module):
     def __init__(self, num_classes: int = 2, dropout: float = 0.3):
         super().__init__()
-        self.backbone = models.resnet18(pretrained=True)
+        self.backbone = models.resnet18(weights=None)
         in_features = self.backbone.fc.in_features
         self.backbone.fc = nn.Sequential(
             nn.Linear(in_features, 128),
