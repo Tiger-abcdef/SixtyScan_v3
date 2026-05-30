@@ -806,7 +806,9 @@ def run_desktop_app():
         if predict_btn:
             valid_vowel_files = [f for f in st.session_state.vowel_files if f is not None]
 
-            if len(valid_vowel_files) == 7 and st.session_state.pataka_file and st.session_state.sentence_file:
+            # BYPASS: validation temporarily disabled — restore by removing the `if True:` line and uncommenting the original
+            # if len(valid_vowel_files) == 7 and st.session_state.pataka_file and st.session_state.sentence_file:
+            if True:  # BYPASS
                 with st.spinner("กำลังวิเคราะห์..."):
                     try:
                         final_prob = predict_from_model(
@@ -880,8 +882,8 @@ def run_desktop_app():
                         st.markdown(results_html, unsafe_allow_html=True)
                     except Exception as e:
                         st.error(f"เกิดข้อผิดพลาดในการวิเคราะห์: {str(e)}")
-            else:
-                st.warning("กรุณาอัดเสียงหรืออัปโหลดให้ครบทั้ง 7 สระ พยางค์ และประโยค", icon="⚠")
+            # else:  # BYPASS: warning suppressed
+            #     st.warning("กรุณาอัดเสียงหรืออัปโหลดให้ครบทั้ง 7 สระ พยางค์ และประโยค", icon="⚠")
 
     # =============================
     # Main App Logic
