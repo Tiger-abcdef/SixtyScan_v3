@@ -4,7 +4,7 @@ __pycache__/
 *.pyo
 *.pyd
 
-# Model weights — download via gdown at runtime, never commit
+# Model weights — best_model.pth is committed; all others excluded
 *.pth
 !best_model.pth
 *.pt

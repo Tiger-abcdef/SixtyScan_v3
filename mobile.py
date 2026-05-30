@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import io
 import tempfile
-import gdown
 from datetime import datetime
 import pytz
 import atexit
@@ -19,8 +18,7 @@ from pathlib import Path
 
 # Configuration for mobile
 CONFIG = {
-    'MODEL_PATH': "best_resnet18.pth",
-    'MODEL_URL': "https://drive.google.com/uc?id=1_oHE9B-2PgSqpTQCC9HrG7yO0rsnZtqs",
+    'MODEL_PATH': "best_model.pth",
     'CSS_FILE': "mobilestyle.css",
     'LOGO_PATHS': ["logo.png", "./logo.png", "assets/logo.png", "images/logo.png"],
     'IMAGE_PATHS': ["insert.jpg", "./insert.jpg", "assets/insert.jpg", "images/insert.jpg"],
@@ -72,11 +70,11 @@ def _clean_state_dict(state_dict: dict) -> dict:
 
 @st.cache_resource
 def load_model():
-    """Load the ResNet18 model with robust checkpoint handling."""
+    """Load the ResNet18 model from the bundled checkpoint."""
     try:
         if not os.path.exists(CONFIG['MODEL_PATH']):
-            with st.spinner("Downloading model..."):
-                gdown.download(CONFIG['MODEL_URL'], CONFIG['MODEL_PATH'], quiet=False)
+            st.error(f"Model file '{CONFIG['MODEL_PATH']}' not found. Ensure it is present in the repository root.")
+            return None
         model = ResNet18Classifier()
         ckpt = torch.load(CONFIG['MODEL_PATH'], map_location=torch.device("cpu"), weights_only=True)
         if isinstance(ckpt, dict) and 'state_dict' in ckpt:
@@ -671,7 +669,7 @@ def run_mobile_app():
         # Load model
         model = load_model()
         if not model:
-            st.error("Cannot proceed without model. Please check your internet connection and try again.")
+            st.error("Cannot proceed without model. Please verify best_model.pth is present in the repository root.")
             return
 
         # Clear button logic
