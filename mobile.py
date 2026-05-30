@@ -200,9 +200,11 @@ def run_mobile_app():
     # =============================
     def convert_to_wav_if_needed(file_path):
         """Convert audio file to WAV format if necessary"""
+        if file_path is None:
+            return None
         try:
             from pydub import AudioSegment
-            
+
             if not file_path.lower().endswith(".wav"):
                 audio = AudioSegment.from_file(file_path)
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
